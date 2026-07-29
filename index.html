@@ -3,11 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Treasury BP Vol Dashboard</title>
+    <title>Treasury Vol Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
 :root {
   --bg: #eae9eb;
@@ -259,7 +260,7 @@ th {
     <div class="page-shell">
       <header class="hero">
         <div>
-          <h1>Treasury BP Vol Dashboard</h1>
+          <h1>Treasury Vol Dashboard</h1>
         </div>
       </header>
       <section class="toolbar">
@@ -275,6 +276,7 @@ th {
         </fieldset>
         <button id="fetch-btn" class="primary-btn">Refresh from Treasury</button>
         <button id="download-btn" class="accent-btn" disabled>Download current CSV</button>
+        <button id="export-excel-btn" class="secondary-btn" disabled>Export Excel report</button>
       </section>
       <section id="message-banner" class="banner hidden"></section>
       <section class="metric-grid">
@@ -318,9 +320,23 @@ th {
         </article>
         <article class="panel">
           <div class="panel-header">
-            <h2>Fixed historical regimes</h2>
+            <h2>Excel volatility references</h2>
           </div>
           <div id="fixed-regime-chart" class="chart"></div>
+        </article>
+      </section>
+      <section class="panel-grid two-up">
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Excel reference table</h2>
+          </div>
+          <div id="excel-reference-table" class="table-wrap"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Volatility increase</h2>
+          </div>
+          <div id="vol-increase-table" class="table-wrap"></div>
         </article>
       </section>
       <section class="panel">
@@ -388,19 +404,30 @@ window.STATIC_DASHBOARD_CONFIG = {
     "extreme": 95
   },
   "fixed_regimes": {
+    "2005-2024": [
+      "2005-01-01",
+      "2024-12-31"
+    ],
     "Low Rate Period": [
       "2012-01-01",
       "2021-12-31"
     ],
-    "High Vol Reference": [
-      "2022-01-01",
-      "2023-12-31"
-    ],
-    "Long History": [
-      "2005-01-01",
-      "2025-12-31"
+    "2015-2024": [
+      "2015-01-01",
+      "2024-12-31"
     ]
   },
+  "excel_reference_tenors": [
+    "3M",
+    "1Y",
+    "2Y",
+    "3Y",
+    "5Y",
+    "7Y",
+    "10Y",
+    "20Y",
+    "30Y"
+  ],
   "representative_tenors": [
     "2Y",
     "10Y",
@@ -427,6 +454,7 @@ const dom = {
   startYear: document.getElementById("start-year"),
   fetchBtn: document.getElementById("fetch-btn"),
   downloadBtn: document.getElementById("download-btn"),
+  exportExcelBtn: document.getElementById("export-excel-btn"),
   metricRows: document.getElementById("metric-rows"),
   metricTenors: document.getElementById("metric-tenors"),
   metricHigh: document.getElementById("metric-high"),
@@ -435,6 +463,8 @@ const dom = {
   ratesRangeSelect: document.getElementById("rates-range-select"),
   messageBanner: document.getElementById("message-banner"),
   regimeTable: document.getElementById("regime-table"),
+  excelReferenceTable: document.getElementById("excel-reference-table"),
+  volIncreaseTable: document.getElementById("vol-increase-table"),
   qualityTable: document.getElementById("quality-table"),
   latestObservationsTable: document.getElementById("latest-observations-table"),
 };
@@ -456,6 +486,7 @@ function showMessage(message) {
 function setBusy(isBusy) {
   dom.fetchBtn.disabled = isBusy;
   dom.downloadBtn.disabled = isBusy || !state.yields.length;
+  dom.exportExcelBtn.disabled = isBusy || !state.payload;
   dom.fetchBtn.textContent = isBusy ? "Fetching..." : "Refresh from Treasury";
 }
 
@@ -489,15 +520,9 @@ function downloadCurrentCsv() {
   URL.revokeObjectURL(url);
 }
 
-function mean(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function sampleStd(values) {
-  if (values.length < 2) return null;
-  const avg = mean(values);
-  const variance = values.reduce((sum, value) => sum + ((value - avg) ** 2), 0) / (values.length - 1);
-  return Math.sqrt(variance);
+function rootMeanSquare(values) {
+  if (!values.length) return null;
+  return Math.sqrt(values.reduce((sum, value) => sum + (value ** 2), 0) / values.length);
 }
 
 function quantile(sortedValues, q) {
@@ -533,6 +558,12 @@ function calculateBpChanges(rows, tenors) {
   });
 }
 
+function annualizedRmsBpVol(values, annualizationDays) {
+  const valid = values.filter((value) => value !== null && value !== undefined);
+  const dailyRmsBp = rootMeanSquare(valid);
+  return dailyRmsBp === null ? null : dailyRmsBp * Math.sqrt(annualizationDays);
+}
+
 function rollingAnnualizedBpVol(rows, windows, annualizationDays, tenors) {
   const bp = calculateBpChanges(rows, tenors);
   const result = {};
@@ -545,8 +576,7 @@ function rollingAnnualizedBpVol(rows, windows, annualizationDays, tenors) {
         if (windowRows.length < minPeriods) {
           out[tenor] = null;
         } else {
-          const std = sampleStd(windowRows);
-          out[tenor] = std === null ? null : std * Math.sqrt(annualizationDays);
+          out[tenor] = annualizedRmsBpVol(windowRows, annualizationDays);
         }
       });
       return out;
@@ -630,11 +660,11 @@ function fixedRegimeReferences(bpRows, regimes, annualizationDays, tenors) {
     const sample = bpRows.filter((row) => row.Date >= start && row.Date <= end);
     tenors.forEach((tenor) => {
       const values = sample.map((row) => row[tenor]).filter((value) => value !== null);
-      const std = sampleStd(values);
       rows.push({
         Regime: name,
         Tenor: tenor,
-        "Annualized BP Vol": std === null ? null : std * Math.sqrt(annualizationDays),
+        "Annualized BP Vol": annualizedRmsBpVol(values, annualizationDays),
+        "Daily RMS BP": rootMeanSquare(values),
         Start: start,
         End: end,
         Observations: values.length,
@@ -642,6 +672,55 @@ function fixedRegimeReferences(bpRows, regimes, annualizationDays, tenors) {
     });
   });
   return rows;
+}
+
+function trailingReferenceRows(bpRows, windows, annualizationDays, tenors) {
+  return Object.entries(windows).flatMap(([label, nDays]) => {
+    const sample = bpRows.slice(-nDays);
+    return tenors.map((tenor) => {
+      const values = sample.map((row) => row[tenor]).filter((value) => value !== null);
+      return {
+        Regime: label,
+        Tenor: tenor,
+        "Annualized BP Vol": annualizedRmsBpVol(values, annualizationDays),
+        "Daily RMS BP": rootMeanSquare(values),
+        Start: sample[0]?.Date ?? null,
+        End: sample[sample.length - 1]?.Date ?? null,
+        Observations: values.length,
+      };
+    });
+  });
+}
+
+function filterReferenceTenors(tenors, config) {
+  const preferred = config.excel_reference_tenors || tenors;
+  return preferred.filter((tenor) => tenors.includes(tenor));
+}
+
+function pivotReferenceRows(rows, tenors) {
+  const order = [...new Set(rows.map((row) => row.Regime))];
+  return order.map((regime) => {
+    const out = { Regime: regime };
+    tenors.forEach((tenor) => {
+      const match = rows.find((row) => row.Regime === regime && row.Tenor === tenor);
+      out[tenor] = match?.["Annualized BP Vol"] ?? null;
+    });
+    return out;
+  });
+}
+
+function buildVolIncreaseRows(referenceRows, tenors, currentLabel, baseLabels) {
+  return baseLabels.flatMap((baseLabel) => tenors.map((tenor) => {
+    const current = referenceRows.find((row) => row.Regime === currentLabel && row.Tenor === tenor)?.["Annualized BP Vol"] ?? null;
+    const base = referenceRows.find((row) => row.Regime === baseLabel && row.Tenor === tenor)?.["Annualized BP Vol"] ?? null;
+    return {
+      Comparison: `${currentLabel} vs ${baseLabel}`,
+      Tenor: tenor,
+      "Current Annualized BP Vol": current,
+      "Reference Annualized BP Vol": base,
+      "Increase %": current !== null && base ? (current / base - 1) * 100 : null,
+    };
+  }));
 }
 
 function qualityReport(yields, bpChanges, threshold, tenors) {
@@ -671,10 +750,21 @@ function buildPayload(rows) {
   const activeWindows = Object.keys(windows).length ? windows : state.config.windows;
   const { bp, result: volByWindow } = rollingAnnualizedBpVol(filteredRows, activeWindows, state.config.annualization_days, tenors);
   const primaryWindow = volByWindow["3M"] ? "3M" : Object.keys(volByWindow)[0];
+  const referenceTenors = filterReferenceTenors(tenors, state.config);
   const currentCurveRows = currentCurve(volByWindow, tenors);
   const percentileRefs = historicalPercentileReferences(volByWindow[primaryWindow], state.config.percentile_lookback_years, tenors);
   const currentPercentileRows = currentPercentiles(volByWindow[primaryWindow], state.config.percentile_lookback_years, tenors, state.config.percentile_thresholds);
-  const fixedRegimeRows = fixedRegimeReferences(bp, state.config.fixed_regimes, state.config.annualization_days, tenors);
+  const fixedRegimeRows = fixedRegimeReferences(bp, state.config.fixed_regimes, state.config.annualization_days, referenceTenors);
+  const trailingReferenceRowsData = trailingReferenceRows(bp, {
+    "Last 3 Years": state.config.annualization_days * 3,
+    "Last Quarter": state.config.windows["3M"],
+    "1Y": state.config.windows["1Y"],
+    "3M": state.config.windows["3M"],
+    "1M": state.config.windows["1M"],
+  }, state.config.annualization_days, referenceTenors);
+  const excelReferenceRows = [...fixedRegimeRows, ...trailingReferenceRowsData];
+  const excelReferenceTableRows = pivotReferenceRows(excelReferenceRows, referenceTenors);
+  const volIncreaseRows = buildVolIncreaseRows(excelReferenceRows, referenceTenors, "3M", ["Low Rate Period", "2005-2024", "2015-2024", "Last 3 Years"]);
   const qualityRows = qualityReport(filteredRows, bp, state.config.outlier_bp_threshold, tenors);
   const latestDate = filteredRows[filteredRows.length - 1]?.Date ?? "-";
 
@@ -687,13 +777,18 @@ function buildPayload(rows) {
       high_or_extreme_tenors: currentPercentileRows.filter((row) => ["High", "Extreme"].includes(row.Regime)).length,
       selected_windows: Object.keys(activeWindows),
       primary_window: primaryWindow,
+      volatility_method: "Excel RMS realized volatility, annualized in basis points",
     },
+    bp_changes: bp,
     yields: filteredRows,
     vol_history: volByWindow,
     current_curve: currentCurveRows,
     percentile_refs: percentileRefs,
     current_percentiles: currentPercentileRows,
     fixed_regimes: fixedRegimeRows,
+    excel_references: excelReferenceRows,
+    excel_reference_table: excelReferenceTableRows,
+    vol_increase: volIncreaseRows,
     quality: qualityRows,
     latest_observations: [...filteredRows].reverse().slice(0, 20),
   };
@@ -723,6 +818,66 @@ function renderTable(container, rows, numericDigits = 1) {
   container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
+function rowsForSheet(rows) {
+  return rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value ?? ""])));
+}
+
+function addWorksheet(workbook, name, rows) {
+  const safeName = name.slice(0, 31);
+  const data = rowsForSheet(rows);
+  const sheet = XLSX.utils.json_to_sheet(data.length ? data : [{ Note: "No data available" }]);
+  const headers = Object.keys(data[0] || { Note: "" });
+  sheet["!cols"] = headers.map((header) => ({ wch: Math.min(Math.max(header.length + 2, 12), 28) }));
+  XLSX.utils.book_append_sheet(workbook, sheet, safeName);
+}
+
+function exportExcelReport() {
+  if (!state.payload) {
+    showMessage("Load Treasury data before exporting the Excel report.");
+    return;
+  }
+  if (!window.XLSX) {
+    showMessage("Excel export library is not available. Check the CDN connection and try again.");
+    return;
+  }
+
+  const workbook = XLSX.utils.book_new();
+  const summaryRows = [
+    { Metric: "Latest date", Value: state.payload.summary.latest_date },
+    { Metric: "Source", Value: state.payload.summary.source },
+    { Metric: "Observations", Value: state.payload.summary.rows },
+    { Metric: "Tenors", Value: state.payload.summary.tenors },
+    { Metric: "Primary window", Value: state.payload.summary.primary_window },
+    { Metric: "Volatility method", Value: state.payload.summary.volatility_method },
+    { Metric: "Annualization days", Value: state.config.annualization_days },
+    { Metric: "Windows", Value: state.payload.summary.selected_windows.join(", ") },
+  ];
+  const methodologyRows = [
+    { Item: "Daily move", Method: "Current yield minus prior observation yield, multiplied by 100 to convert percentage points to basis points." },
+    { Item: "Excel RMS daily vol", Method: "SQRT(SUMSQ(daily bp moves) / COUNT(daily bp moves)). This matches the workbook's realized-volatility style formula." },
+    { Item: "Annualized BP Vol", Method: "Excel RMS daily vol * SQRT(252)." },
+    { Item: "Percentile comparison", Method: "Current annualized RMS bp vol ranked against the selected historical lookback." },
+    { Item: "Volatility increase", Method: "Current 3M annualized RMS bp vol / reference annualized RMS bp vol - 1." },
+  ];
+
+  addWorksheet(workbook, "Summary", summaryRows);
+  addWorksheet(workbook, "Excel References", state.payload.excel_reference_table);
+  addWorksheet(workbook, "Vol Increase", state.payload.vol_increase);
+  addWorksheet(workbook, "Current Curve", state.payload.current_curve);
+  addWorksheet(workbook, "Percentiles", state.payload.current_percentiles.map((row) => ({
+    ...row,
+    ...(state.payload.percentile_refs.find((item) => item.Tenor === row.Tenor) || {}),
+  })));
+  addWorksheet(workbook, "Fixed Regimes", state.payload.fixed_regimes);
+  addWorksheet(workbook, "Quality", state.payload.quality);
+  addWorksheet(workbook, "Latest Observations", state.payload.latest_observations);
+  addWorksheet(workbook, "Yield History", state.payload.yields);
+  addWorksheet(workbook, "Daily BP Changes", state.payload.bp_changes);
+  addWorksheet(workbook, "Methodology", methodologyRows);
+
+  XLSX.writeFile(workbook, `treasury_vol_report_${state.payload.summary.latest_date}.xlsx`);
+}
+
 function renderSummary(summary) {
   dom.metricRows.textContent = Number(summary.rows).toLocaleString();
   dom.metricTenors.textContent = String(summary.tenors);
@@ -748,7 +903,7 @@ function plotCurrentCurve(rows) {
     mode: "lines+markers",
     name: window,
   }));
-  Plotly.newPlot("curve-chart", traces, baseLayout("Annualized BP Vol (bp)", "Tenor"), { responsive: true });
+  Plotly.newPlot("curve-chart", traces, baseLayout("Annualized RMS BP Vol (bp)", "Tenor"), { responsive: true });
 }
 
 function plotHeatmap(rows) {
@@ -788,7 +943,7 @@ function plotPercentileChart(currentRows, refs) {
     });
   });
   Plotly.newPlot("percentile-chart", traces, {
-    ...baseLayout("Annualized BP Vol (bp)", "Tenor"),
+    ...baseLayout("Annualized RMS BP Vol (bp)", "Tenor"),
     barmode: "group",
   }, { responsive: true });
 }
@@ -805,7 +960,7 @@ function plotFixedRegimes(rows) {
     mode: "lines+markers",
     name,
   }));
-  Plotly.newPlot("fixed-regime-chart", traces, baseLayout("Annualized BP Vol (bp)", "Tenor"), { responsive: true });
+  Plotly.newPlot("fixed-regime-chart", traces, baseLayout("Annualized RMS BP Vol (bp)", "Tenor"), { responsive: true });
 }
 
 function plotVolHistory() {
@@ -818,7 +973,7 @@ function plotVolHistory() {
     mode: "lines",
     name: tenor,
   }));
-  Plotly.newPlot("vol-history-chart", traces, baseLayout("Annualized BP Vol (bp)", "Date"), { responsive: true });
+  Plotly.newPlot("vol-history-chart", traces, baseLayout("Annualized RMS BP Vol (bp)", "Date"), { responsive: true });
 }
 
 function filterRatesRange(rows, range) {
@@ -871,7 +1026,7 @@ function renderPayload() {
   plotCurrentCurve(state.payload.current_curve);
   plotHeatmap(state.payload.current_curve);
   plotPercentileChart(state.payload.current_percentiles, state.payload.percentile_refs);
-  plotFixedRegimes(state.payload.fixed_regimes);
+  plotFixedRegimes(state.payload.excel_references);
   plotVolHistory();
   plotRatesHistory();
 
@@ -881,8 +1036,11 @@ function renderPayload() {
   }));
 
   renderTable(dom.regimeTable, regimeRows);
+  renderTable(dom.excelReferenceTable, state.payload.excel_reference_table);
+  renderTable(dom.volIncreaseTable, state.payload.vol_increase, 1);
   renderTable(dom.qualityTable, state.payload.quality, 0);
   renderTable(dom.latestObservationsTable, state.payload.latest_observations, 2);
+  dom.exportExcelBtn.disabled = false;
 }
 
 async function loadConfig() {
@@ -987,6 +1145,7 @@ async function refreshFromTreasury() {
 
 dom.fetchBtn.addEventListener("click", refreshFromTreasury);
 dom.downloadBtn.addEventListener("click", downloadCurrentCsv);
+dom.exportExcelBtn.addEventListener("click", exportExcelReport);
 dom.volWindowSelect.addEventListener("change", plotVolHistory);
 dom.ratesRangeSelect.addEventListener("change", plotRatesHistory);
 document.querySelectorAll('input[name="window"]').forEach((checkbox) => {
