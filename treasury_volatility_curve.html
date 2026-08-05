@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>US Treasuries Volatility Curve</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#fff;--txt:#1a1a2e;--mut:#6b7280;--bdr:#d1d5db;--sf:#f3f4f6;--acc:#0f766e;--acc2:#0ea5e9}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--txt);display:flex;flex-direction:column;align-items:stretch;padding:8px 0 6px;min-height:auto}
+h1{font-size:28px;font-weight:700;letter-spacing:-.4px;text-align:center}
+.sub{font-size:12px;color:var(--mut);margin:2px 0 10px;text-align:center}
+.controls{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;justify-content:center;margin-bottom:8px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--mut)}
+.field input,.field select{border:1px solid var(--bdr);border-radius:6px;background:var(--sf);padding:6px 8px;font:inherit;color:var(--txt);min-width:120px}
+.actions{display:flex;align-items:center;gap:8px}
+.btn{height:32px;border-radius:7px;border:1px solid var(--bdr);background:var(--sf);padding:0 10px;cursor:pointer;font-size:12px;color:var(--txt)}
+.btn:hover{background:#e7eef8}
+.btn.primary{border-color:#9fd7f3;background:#eff8ff}
+.pins-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:center;margin-bottom:6px;min-height:24px}
+.pin-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px 2px 6px;border-radius:12px;font-size:10px;font-weight:600;color:#fff}
+.pin-chip .x{cursor:pointer;opacity:.75;font-size:12px}
+.pin-chip .x:hover{opacity:1}
+.legend{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:4px;font-size:10px;color:var(--mut);flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-sw{width:24px;height:8px;border-radius:2px}
+.chart-wrap{width:min(100%,1280px);height:520px;margin:0 auto}
+.tbl-wrap{margin:10px auto 0;width:min(100%,1280px);overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:10px}
+th{background:var(--sf);padding:4px 6px;text-align:center;font-weight:600;color:#444;border-bottom:2px solid var(--bdr);white-space:nowrap}
+td{padding:4px 6px;text-align:center;border-bottom:1px solid #eee;white-space:nowrap}
+tr.cur td{background:#ecfeff;font-weight:600}
+.status{padding:8px 14px;border-radius:6px;font-size:11px;text-align:center;margin:6px auto;transition:opacity .4s;width:min(100%,1280px)}
+.status.ok{background:#f0fdf4;color:#166534}.status.err{background:#fef2f2;color:#991b1b}.status.load{background:#f0f9ff;color:#1e40af}.status.note{background:#f8fafc;color:#475569}
+.source{margin-top:10px;font-size:9px;color:#aaa;text-align:center}
+.source a{color:var(--acc2);text-decoration:none}
+@media(max-width:720px){body{padding:6px 0 4px}h1{font-size:20px}.controls{gap:6px}.field input,.field select{min-width:104px}.chart-wrap{height:400px}}
+</style>
+</head>
+<body>
+<h1>US Treasuries Volatility Curve</h1>
+<p class="sub">Annualized rolling RMS bp volatility by tenor over a custom date range</p>
+<div class="controls">
+  <label class="field">
+    From
+    <input type="date" id="fromDate">
+  </label>
+  <label class="field">
+    To
+    <input type="date" id="toDate">
+  </label>
+  <label class="field">
+    Rolling window
+    <select id="windowSelect">
+      <option value="1M">1M</option>
+      <option value="3M" selected>3M</option>
+      <option value="1Y">1Y</option>
+    </select>
+  </label>
+  <div class="actions">
+    <button class="btn primary" id="applyBtn" type="button">Update curve</button>
+    <button class="btn" id="pinBtn" type="button">Pin current</button>
+  </div>
+</div>
+<div class="pins-row" id="pinsRow"></div>
+<div class="legend" id="legendBar"></div>
+<div id="statusBox"></div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div class="tbl-wrap" id="tblWrap"></div>
+<p class="source">Data: <a href="https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve" target="_blank">U.S. Treasury XML Feed</a></p>
+
+<script>
+const LABELS=["1M","2M","3M","4M","6M","1Y","2Y","3Y","5Y","7Y","10Y","20Y","30Y"];
+const XML_KEYS=["BC_1MONTH","BC_2MONTH","BC_3MONTH","BC_4MONTH","BC_6MONTH","BC_1YEAR","BC_2YEAR","BC_3YEAR","BC_5YEAR","BC_7YEAR","BC_10YEAR","BC_20YEAR","BC_30YEAR"];
+const WINDOWS={"1M":21,"3M":63,"1Y":252};
+const ANNUALIZATION_DAYS=252;
+const MAIN_COLOR="#14b8a6";
+const PIN_COLORS=["#0284c7","#7c3aed","#dc2626","#ea580c","#2563eb","#0f766e","#be185d","#ca8a04"];
+const MIN_SELECTABLE_DATE="1990-01-01";
+
+let allData=[],chart=null,loading=false,pinned=[],pinIndex=0;
+const yearCache={};
+
+function fmtD(s){if(!s)return"\u2014";const[y,m,d]=s.split("-");return`${+m}/${+d}/${y}`;}
+function fmtPeriod(item){return `${fmtD(item.from)} to ${fmtD(item.to)} \u00b7 ${item.window}`;}
+function showSt(m,t){
+  const e=document.getElementById("statusBox");
+  if(!m){e.innerHTML="";return;}
+  e.innerHTML=`<div class="status ${t}">${m}</div>`;
+  if(t==="ok")setTimeout(()=>{if(e.firstChild?.classList?.contains("ok"))e.innerHTML="";},3200);
+}
+function parseTreasuryXml(xmlText){
+  const doc=new DOMParser().parseFromString(xmlText,"application/xml");
+  const entries=[...doc.getElementsByTagNameNS("*","entry")];
+  const rows=[];
+  entries.forEach(entry=>{
+    const f={};
+    [...entry.getElementsByTagNameNS("*","*")].forEach(n=>{
+      const t=n.localName,v=n.textContent?.trim();
+      if(v)f[t]=v;
+    });
+    const dt=f.NEW_DATE||f.RECORD_DATE||f.DATE||f.new_date||"";
+    if(!dt)return;
+    const date=dt.slice(0,10);
+    const rates=XML_KEYS.map(k=>{const v=parseFloat(f[k]);return Number.isNaN(v)?null:v;});
+    if(rates.every(r=>r===null))return;
+    rows.push({date,rates});
+  });
+  rows.sort((a,b)=>a.date.localeCompare(b.date));
+  const seen=new Set();
+  return rows.filter(row=>{if(seen.has(row.date))return false;seen.add(row.date);return true;});
+}
+async function fetchYear(year){
+  if(yearCache[year])return yearCache[year];
+  const url=`https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value=${year}`;
+  const resp=await fetch(url);
+  if(!resp.ok)throw new Error(`HTTP ${resp.status}`);
+  const rows=parseTreasuryXml(await resp.text());
+  yearCache[year]=rows;
+  return rows;
+}
+function rebuildAllData(){
+  const merged=[];
+  Object.values(yearCache).forEach(rows=>merged.push(...rows));
+  merged.sort((a,b)=>a.date.localeCompare(b.date));
+  const seen=new Set();
+  allData=merged.filter(row=>{if(seen.has(row.date))return false;seen.add(row.date);return true;});
+}
+async function ensureYears(startYear,endYear){
+  const years=[];
+  for(let year=startYear;year<=endYear;year+=1){if(!yearCache[year])years.push(year);}
+  if(!years.length)return;
+  loading=true;
+  showSt(`Loading ${years[0]}-${years[years.length-1]}\u2026`,"load");
+  try{
+    for(const year of years){await fetchYear(year);}
+    rebuildAllData();
+    showSt(`Loaded ${allData.length} total Treasury dates`,"ok");
+  }catch(err){
+    showSt(`Failed to load Treasury data: ${err.message}`,"err");
+  }
+  loading=false;
+}
+function rootMeanSquare(values){
+  if(!values.length)return null;
+  return Math.sqrt(values.reduce((sum,value)=>sum+(value**2),0)/values.length);
+}
+function annualizedRmsBpVol(values){
+  const valid=values.filter(value=>value!==null&&value!==undefined);
+  const rms=rootMeanSquare(valid);
+  return rms===null?null:rms*Math.sqrt(ANNUALIZATION_DAYS);
+}
+function calculateBpChanges(rows){
+  return rows.map((row,index)=>{
+    const out={date:row.date,rates:Array(LABELS.length).fill(null)};
+    if(index===0)return out;
+    row.rates.forEach((rate,i)=>{
+      const prev=rows[index-1].rates[i];
+      out.rates[i]=prev===null||rate===null?null:(rate-prev)*100;
+    });
+    return out;
+  });
+}
+function computeCurve(from,to,windowLabel){
+  const nDays=WINDOWS[windowLabel];
+  const minPeriods=Math.max(5,Math.floor(nDays*0.8));
+  const sample=allData.filter(row=>row.date>=from&&row.date<=to);
+  if(sample.length<nDays){
+    return {error:`Need at least ${nDays} observations for ${windowLabel}.`};
+  }
+  const bp=calculateBpChanges(sample);
+  const curve=LABELS.map((tenor,tenorIndex)=>{
+    const values=bp.map(row=>row.rates[tenorIndex]).filter(value=>value!==null);
+    if(values.length<minPeriods)return null;
+    return annualizedRmsBpVol(values);
+  });
+  if(curve.every(value=>value===null)){
+    return {error:`No valid volatility values for ${windowLabel} in this period.`};
+  }
+  return {
+    label:`${fmtD(from)} to ${fmtD(to)}`,
+    from,
+    to,
+    window:windowLabel,
+    values:curve,
+    obs:sample.length,
+  };
+}
+function currentSelection(){
+  return {
+    from:document.getElementById("fromDate").value,
+    to:document.getElementById("toDate").value,
+    window:document.getElementById("windowSelect").value,
+  };
+}
+function syncLegend(current){
+  let html="";
+  if(current){
+    html+=`<span class="legend-item"><span class="legend-sw" style="background:${MAIN_COLOR}"></span>${fmtPeriod(current)}</span>`;
+  }
+  pinned.forEach(item=>{
+    html+=`<span class="legend-item"><span class="legend-sw" style="background:${item.color};opacity:.75"></span>${fmtPeriod(item)}</span>`;
+  });
+  document.getElementById("legendBar").innerHTML=html;
+}
+function syncPins(){
+  document.getElementById("pinsRow").innerHTML=pinned.map(item=>
+    `<span class="pin-chip" style="background:${item.color}">${fmtPeriod(item)} <span class="x" data-id="${item.id}">\u00d7</span></span>`
+  ).join("");
+  document.querySelectorAll(".pin-chip .x").forEach(node=>{
+    node.addEventListener("click",()=>{unpin(Number(node.dataset.id));});
+  });
+}
+function renderTable(current){
+  const wrap=document.getElementById("tblWrap");
+  const rows=[];
+  if(current)rows.push({kind:"cur",label:fmtPeriod(current),values:current.values,color:MAIN_COLOR});
+  pinned.slice().reverse().forEach(item=>rows.push({kind:"pin",label:fmtPeriod(item),values:item.values,color:item.color}));
+  if(!rows.length){wrap.innerHTML="";return;}
+  let html=`<table><tr><th>Period</th>${LABELS.map(label=>`<th>${label}</th>`).join("")}</tr>`;
+  rows.forEach(row=>{
+    html+=`<tr class="${row.kind==="cur"?"cur":""}"><td style="color:${row.color};font-weight:700">${row.label}</td>${row.values.map(value=>`<td>${value===null?"\u2014":`${value.toFixed(1)} bp`}</td>`).join("")}</tr>`;
+  });
+  wrap.innerHTML=html+"</table>";
+}
+function renderChart(current){
+  const datasets=[];
+  const allValues=[];
+  if(current){
+    datasets.push({label:fmtPeriod(current),data:current.values,borderColor:MAIN_COLOR,backgroundColor:"rgba(20,184,166,.08)",borderWidth:2.5,pointRadius:4,pointBackgroundColor:MAIN_COLOR,pointBorderColor:"#fff",pointBorderWidth:1.5,pointHoverRadius:6,fill:true,tension:.4,spanGaps:true});
+    allValues.push(...current.values.filter(value=>value!==null));
+  }
+  pinned.forEach(item=>{
+    datasets.push({label:fmtPeriod(item),data:item.values,borderColor:item.color,backgroundColor:"transparent",borderWidth:2,pointRadius:3.5,pointBackgroundColor:item.color,pointBorderColor:"#fff",pointBorderWidth:1,pointHoverRadius:5,borderDash:[6,3],fill:false,tension:.4,spanGaps:true});
+    allValues.push(...item.values.filter(value=>value!==null));
+  });
+  chart.data.datasets=datasets;
+  if(allValues.length){
+    chart.options.scales.y.min=Math.max(0,Math.floor((Math.min(...allValues)-5)/5)*5);
+    chart.options.scales.y.max=Math.ceil((Math.max(...allValues)+5)/5)*5;
+  }
+  chart.update("none");
+}
+function unpin(id){
+  pinned=pinned.filter(item=>item.id!==id);
+  const current=lastComputed();
+  syncPins();
+  syncLegend(current);
+  renderChart(current);
+  renderTable(current);
+}
+let latestCurve=null;
+function lastComputed(){return latestCurve;}
+function setDefaultRange(){
+  if(!allData.length)return;
+  const to=allData[allData.length-1].date;
+  const startIndex=Math.max(0,allData.length-63);
+  const from=allData[startIndex].date;
+  document.getElementById("toDate").value=to;
+  document.getElementById("fromDate").value=from;
+}
+async function updateCurve(){
+  const {from,to,window}=currentSelection();
+  if(!from||!to){showSt("Choose both from and to dates.","note");return;}
+  if(from>to){showSt("From date must be on or before to date.","err");return;}
+  await ensureYears(Number(from.slice(0,4)),Number(to.slice(0,4)));
+  const curve=computeCurve(from,to,window);
+  if(curve.error){showSt(curve.error,"err");return;}
+  latestCurve=curve;
+  syncPins();
+  syncLegend(curve);
+  renderChart(curve);
+  renderTable(curve);
+  showSt(`${window} volatility curve updated for ${fmtD(from)} to ${fmtD(to)}.`,"ok");
+}
+function pinCurrent(){
+  if(!latestCurve){showSt("Update the curve before pinning.","note");return;}
+  if(pinned.some(item=>item.from===latestCurve.from&&item.to===latestCurve.to&&item.window===latestCurve.window)){showSt("That curve is already pinned.","note");return;}
+  pinned.push({...latestCurve,color:PIN_COLORS[pinIndex%PIN_COLORS.length],id:++pinIndex,values:latestCurve.values.slice()});
+  syncPins();
+  syncLegend(latestCurve);
+  renderChart(latestCurve);
+  renderTable(latestCurve);
+}
+async function handleWindowChange(){
+  const nextWindow=document.getElementById("windowSelect").value;
+  const previousWindow=latestCurve?.window||"3M";
+  if(nextWindow===previousWindow)return true;
+  const comparisons=[latestCurve,...pinned].filter(Boolean);
+  const recomputed=[];
+  for(const item of comparisons){
+    await ensureYears(Number(item.from.slice(0,4)),Number(item.to.slice(0,4)));
+    const curve=computeCurve(item.from,item.to,nextWindow);
+    if(curve.error){
+      document.getElementById("windowSelect").value=previousWindow;
+      showSt(`Couldn't switch to ${nextWindow}: ${curve.error}`,"err");
+      return false;
+    }
+    recomputed.push(curve);
+  }
+  latestCurve=recomputed[0]||latestCurve;
+  pinned=pinned.map((item,index)=>({
+    ...item,
+    window: nextWindow,
+    values: recomputed[index+1].values.slice(),
+  }));
+  syncPins();
+  syncLegend(latestCurve);
+  renderChart(latestCurve);
+  renderTable(latestCurve);
+  showSt(`Rolling window changed to ${nextWindow} for all pinned comparisons.`,"ok");
+  return true;
+}
+async function init(){
+  const ctx=document.getElementById("chart").getContext("2d");
+  chart=new Chart(ctx,{type:"line",data:{labels:LABELS,datasets:[]},options:{
+    responsive:true,maintainAspectRatio:false,animation:{duration:200},
+    interaction:{mode:"index",intersect:false},
+    plugins:{legend:{display:false},tooltip:{backgroundColor:"rgba(0,0,0,.82)",titleFont:{size:12},bodyFont:{size:11},padding:10,
+      callbacks:{label(c){return `${c.dataset.label}: ${c.parsed.y?.toFixed(1) ?? "\u2014"} bp`;}}}},
+    scales:{
+      x:{grid:{color:"#f0f0f0"},ticks:{font:{size:11},color:"#666"}},
+      y:{grid:{color:"#f0f0f0"},ticks:{font:{size:11},color:"#666",callback:v=>`${v.toFixed(0)} bp`}}
+    }
+  }});
+  const thisYear=new Date().getFullYear();
+  await ensureYears(Math.max(1990,thisYear-1),thisYear);
+  if(!allData.length){showSt("Treasury data did not load.","err");return;}
+  setDefaultRange();
+  const todayIso=new Date().toISOString().slice(0,10);
+  document.getElementById("fromDate").min=MIN_SELECTABLE_DATE;
+  document.getElementById("toDate").min=MIN_SELECTABLE_DATE;
+  document.getElementById("fromDate").max=todayIso;
+  document.getElementById("toDate").max=todayIso;
+  document.getElementById("applyBtn").addEventListener("click",updateCurve);
+  document.getElementById("pinBtn").addEventListener("click",pinCurrent);
+  document.getElementById("windowSelect").addEventListener("change",async()=>{if(await handleWindowChange()){updateCurve();}});
+  document.getElementById("fromDate").addEventListener("change",updateCurve);
+  document.getElementById("toDate").addEventListener("change",updateCurve);
+  await updateCurve();
+}
+init();
+</script>
+</body>
+</html>
