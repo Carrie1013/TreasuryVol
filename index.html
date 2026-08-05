@@ -950,6 +950,15 @@ function plotFixedRegimes(rows) {
     }));
   Plotly.newPlot("fixed-regime-chart", traces, {
     ...baseLayout("Annualized RMS BP Vol (bp)", "Tenor"),
+    margin: { t: 20, r: 20, l: 58, b: 110 },
+    legend: {
+      orientation: "h",
+      x: 0,
+      xanchor: "left",
+      y: -0.18,
+      yanchor: "top",
+      font: { size: 11 },
+    },
     xaxis: {
       ...baseLayout("Annualized RMS BP Vol (bp)", "Tenor").xaxis,
       title: "",

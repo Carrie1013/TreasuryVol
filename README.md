@@ -89,9 +89,15 @@ For each date, tenor, and selected window, the dashboard calculates annualized R
 
 ## Dashboard Sections
 
-### Current Curve
+### Treasury Yield Curve
 
-The Current Curve shows the latest annualized RMS BP volatility by tenor for the selected rolling windows.
+The Treasury Yield Curve is an embedded companion chart for the underlying U.S. Treasury term structure. It lets you inspect the latest curve, move across historical dates, and pin prior yield curves for direct comparison.
+
+This section is useful as the level backdrop for the volatility views below. It helps explain whether a volatility change happened during inversion, steepening, front-end repricing, or a long-end selloff.
+
+### Current Volatility Curve
+
+The Current Volatility Curve shows the latest annualized RMS BP volatility by tenor for the selected rolling windows.
 
 Displayed tenors are intentionally reduced for readability:
 
@@ -100,6 +106,27 @@ Displayed tenors are intentionally reduced for readability:
 ```
 
 The x-axis uses evenly spaced tenor labels, so each displayed maturity has the same visual weight and the curve is easier to scan across short, intermediate, and long maturities.
+
+Although the calculation is built from rolling windows, this panel shows only the latest available point from each selected window. In practice, it reads as a current snapshot by lookback length:
+
+- `1M`: latest curve using the trailing `21` observations
+- `3M`: latest curve using the trailing `63` observations
+- `1Y`: latest curve using the trailing `252` observations
+
+### Treasury Volatility Curve
+
+The Treasury Volatility Curve is an embedded custom comparison tool for realized volatility curves across user-defined date ranges.
+
+The user can:
+
+- choose a `From` date
+- choose a `To` date
+- choose a rolling window: `1M`, `3M`, or `1Y`
+- pin multiple volatility curves for comparison
+
+The default setup uses the last `3M` window. Pinned comparisons keep a common rolling window so that different historical periods can be compared on a like-for-like basis.
+
+This section answers a different question from the Current Volatility Curve. Instead of asking "what does volatility look like right now across different lookback lengths?", it asks "for this chosen historical period, what did the volatility curve look like under one common rolling window?"
 
 ### Percentile Comparison
 
@@ -123,7 +150,7 @@ Regime labels are assigned as:
 
 This section helps answer whether today's volatility is low, normal, high, or extreme relative to its own recent history.
 
-### Excel Volatility References
+### Volatility References
 
 This chart recreates the spirit of the original Excel volatility comparison. It compares annualized RMS BP volatility across fixed and trailing reference periods.
 
