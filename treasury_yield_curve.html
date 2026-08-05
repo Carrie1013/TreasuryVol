@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>US Treasuries Yield Curve</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#fff;--txt:#1a1a2e;--mut:#6b7280;--bdr:#d1d5db;--sf:#f3f4f6;--acc:#3b82f6}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;background:var(--bg);color:var(--txt);display:flex;flex-direction:column;align-items:stretch;padding:8px 0 6px;min-height:auto}
+h1{font-size:28px;font-weight:700;letter-spacing:-.4px;text-align:center}
+.sub{font-size:12px;color:var(--mut);margin:2px 0 10px;text-align:center}
+.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:6px}
+.date-nav{display:inline-flex;align-items:center;background:#fefce8;border:1px solid #d4d08f;border-radius:5px;overflow:hidden}
+.date-nav button{background:#f5f0c4;border:none;padding:5px 9px;cursor:pointer;font-size:13px;color:#555;transition:background .12s}
+.date-nav button:hover{background:#e8e0a0}
+.date-nav button:disabled{opacity:.25;cursor:default}
+.dp{border:none;background:transparent;padding:4px 8px;font-size:13px;font-weight:600;font-family:inherit;color:var(--txt);cursor:pointer;min-width:128px;text-align:center}
+.dp::-webkit-calendar-picker-indicator{cursor:pointer}
+.pin-btn{width:30px;height:30px;border-radius:6px;border:1px solid var(--bdr);background:var(--sf);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:background .12s}
+.pin-btn:hover{background:#dbeafe;border-color:var(--acc)}
+.chk{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--mut);cursor:pointer;user-select:none}
+.chk input[type="checkbox"]{accent-color:var(--acc);width:14px;height:14px}
+.ff-input{width:52px;padding:2px 4px;border:1px solid var(--bdr);border-radius:3px;font-size:11px;text-align:center;font-family:inherit}
+.ff-input:focus{outline:1px solid var(--acc);border-color:var(--acc)}
+.pins-row{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:center;margin-bottom:4px;min-height:22px}
+.pin-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 7px 1px 5px;border-radius:11px;font-size:10px;font-weight:600;color:#fff}
+.pin-chip .x{cursor:pointer;margin-left:1px;opacity:.7;font-weight:400;font-size:12px}
+.pin-chip .x:hover{opacity:1}
+.legend{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:2px;font-size:10px;color:var(--mut);flex-wrap:wrap}
+.legend-item{display:flex;align-items:center;gap:3px}
+.legend-sw{width:24px;height:8px;border-radius:2px}
+.chart-wrap{width:min(100%,1280px);height:520px;margin:0 auto}
+.tbl-wrap{margin:10px auto 0;width:min(100%,1280px);overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:10px}
+th{background:var(--sf);padding:4px 6px;text-align:center;font-weight:600;color:#444;border-bottom:2px solid var(--bdr);white-space:nowrap}
+td{padding:4px 6px;text-align:center;border-bottom:1px solid #eee;white-space:nowrap}
+tr.cur td{background:#eff6ff;font-weight:600}
+.status{padding:8px 14px;border-radius:6px;font-size:11px;text-align:center;margin:6px 0;transition:opacity .4s}
+.status.ok{background:#f0fdf4;color:#166534}.status.err{background:#fef2f2;color:#991b1b}.status.load{background:#f0f9ff;color:#1e40af}
+.source{margin-top:10px;font-size:9px;color:#aaa;text-align:center}
+.source a{color:var(--acc);text-decoration:none}
+@media(max-width:600px){body{padding:6px 0 4px}h1{font-size:20px}.controls{gap:5px}.dp{min-width:105px;font-size:12px}.chart-wrap{height:400px}}
+</style>
+</head>
+<body>
+<h1>US Treasuries Yield Curve</h1>
+<p class="sub">A charting app for interest rates and macroeconomic indicators</p>
+<div class="controls">
+  <div class="date-nav">
+    <button id="prevBtn" onclick="nav(-1)">◀</button>
+    <input type="date" id="datePicker" class="dp" onchange="pickDate(this.value)">
+    <button id="nextBtn" onclick="nav(1)">▶</button>
+  </div>
+  <button class="pin-btn" id="pinBtn" onclick="pinCurrent()" title="Pin this curve">📌</button>
+  <label class="chk">
+    <input type="checkbox" id="fedChk" checked onchange="render()">
+    Fed Funds
+    <input type="text" id="ffLo" class="ff-input" value="3.50" onchange="render()">
+    –
+    <input type="text" id="ffHi" class="ff-input" value="3.75" onchange="render()">
+    %
+  </label>
+</div>
+<div class="pins-row" id="pinsRow"></div>
+<div class="legend" id="legendBar"></div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div id="statusBox"></div>
+<div class="tbl-wrap" id="tblWrap"></div>
+<p class="source">Data: <a href="https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve" target="_blank">U.S. Treasury XML Feed</a> · Inspired by <a href="https://www.ustreasuryyieldcurve.com/" target="_blank">ustreasuryyieldcurve.com</a></p>
+
+<script>
+// No 1.5M — matches the original site
+const LABELS=['1M','2M','3M','4M','6M','1Y','2Y','3Y','5Y','7Y','10Y','20Y','30Y'];
+const XML_KEYS=['BC_1MONTH','BC_2MONTH','BC_3MONTH','BC_4MONTH','BC_6MONTH',
+  'BC_1YEAR','BC_2YEAR','BC_3YEAR','BC_5YEAR','BC_7YEAR','BC_10YEAR','BC_20YEAR','BC_30YEAR'];
+const N=LABELS.length; // 13
+const MC='#42a5f5';
+const PC=['#e65100','#7b1fa2','#00796b','#c62828','#1565c0','#f9a825','#00838f','#ad1457'];
+
+let allData=[],idx=-1,pinned=[],pinC=0,chart=null;
+const yearCache={};
+let loading=false;
+
+/* ── helpers ── */
+function fmtD(s){if(!s)return'—';const[y,m,d]=s.split('-');return+m+'/'+Number(d)+'/'+y;}
+function showSt(m,t){
+  const e=document.getElementById('statusBox');
+  if(!m){e.innerHTML='';return;}
+  e.innerHTML='<div class="status '+t+'">'+m+'</div>';
+  if(t==='ok')setTimeout(()=>{if(e.firstChild?.classList?.contains('ok'))e.innerHTML='';},3500);
+}
+function getFF(){
+  const lo=parseFloat(document.getElementById('ffLo').value);
+  const hi=parseFloat(document.getElementById('ffHi').value);
+  if(isNaN(lo)||isNaN(hi))return null;
+  return{lo:Math.min(lo,hi),hi:Math.max(lo,hi)};
+}
+
+/* ── XML parsing ── */
+function parseTreasuryXml(xmlText){
+  const doc=new DOMParser().parseFromString(xmlText,'application/xml');
+  const entries=[...doc.getElementsByTagNameNS('*','entry')];
+  const rows=[];
+  entries.forEach(entry=>{
+    const f={};
+    [...entry.getElementsByTagNameNS('*','*')].forEach(n=>{
+      const t=n.localName,v=n.textContent?.trim();
+      if(v)f[t]=v;
+    });
+    const dt=f.NEW_DATE||f.RECORD_DATE||f.DATE||f.new_date||'';
+    if(!dt)return;
+    const date=dt.slice(0,10);
+    const rates=XML_KEYS.map(k=>{const v=parseFloat(f[k]);return isNaN(v)?null:v;});
+    if(rates.every(r=>r===null))return;
+    rows.push({date,rates});
+  });
+  const seen=new Set(),out=[];
+  rows.sort((a,b)=>a.date.localeCompare(b.date));
+  rows.forEach(r=>{if(!seen.has(r.date)){seen.add(r.date);out.push(r);}});
+  return out;
+}
+
+/* ── fetch & merge ── */
+async function fetchYear(year){
+  if(yearCache[year])return yearCache[year];
+  const url=`https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value=${year}`;
+  const resp=await fetch(url);
+  if(!resp.ok)throw new Error(`HTTP ${resp.status}`);
+  const rows=parseTreasuryXml(await resp.text());
+  yearCache[year]=rows;
+  return rows;
+}
+function rebuildAllData(){
+  const merged=[];
+  Object.values(yearCache).forEach(rows=>merged.push(...rows));
+  merged.sort((a,b)=>a.date.localeCompare(b.date));
+  const seen=new Set(),out=[];
+  merged.forEach(r=>{if(!seen.has(r.date)){seen.add(r.date);out.push(r);}});
+  allData=out;
+}
+async function ensureYear(year){
+  if(yearCache[year])return;
+  if(loading)return;
+  loading=true;
+  showSt('Loading '+year+'…','load');
+  try{
+    await fetchYear(year);
+    rebuildAllData();
+    showSt('Loaded '+year+' ('+allData.length+' total days)','ok');
+  }catch(e){
+    showSt('Failed to load '+year+': '+e.message,'err');
+  }
+  loading=false;
+}
+
+/* ── nav & pin ── */
+async function nav(d){
+  if(!allData.length)return;
+  const ni=idx+d;
+  if(ni>=0&&ni<allData.length){idx=ni;render();return;}
+  if(ni<0&&idx===0){
+    const fy=parseInt(allData[0].date.slice(0,4));
+    await ensureYear(fy-1);
+    if(allData.length){const t=(fy-1)+'-12-31';idx=allData.length-1;for(let i=allData.length-1;i>=0;i--){if(allData[i].date<=t){idx=i;break;}}render();}
+  }else if(ni>=allData.length){
+    const ly=parseInt(allData[allData.length-1].date.slice(0,4));
+    await ensureYear(ly+1);
+    if(allData.length){const t=(ly+1)+'-01-01';for(let i=0;i<allData.length;i++){if(allData[i].date>=t){idx=i;break;}}render();}
+  }
+}
+async function pickDate(iso){
+  if(!iso)return;
+  await ensureYear(parseInt(iso.slice(0,4)));
+  if(!allData.length)return;
+  let best=0;
+  for(let i=0;i<allData.length;i++){if(allData[i].date<=iso)best=i;if(allData[i].date===iso)break;}
+  idx=best;render();
+}
+function pinCurrent(){
+  if(!allData.length||idx<0)return;
+  const c=allData[idx];
+  if(pinned.some(p=>p.date===c.date))return;
+  pinned.push({date:c.date,rates:c.rates.slice(),color:PC[pinC++%PC.length],id:pinC});
+  render();
+}
+function unpin(id){pinned=pinned.filter(p=>p.id!==id);render();}
+
+/* ── render ── */
+function render(){
+  const has=allData.length>0&&idx>=0,cur=has?allData[idx]:null;
+  const pk=document.getElementById('datePicker');
+  if(cur)pk.value=cur.date;
+  document.getElementById('prevBtn').disabled=loading;
+  document.getElementById('nextBtn').disabled=loading;
+  document.getElementById('pinBtn').disabled=!has;
+
+  document.getElementById('pinsRow').innerHTML=pinned.map(p=>
+    '<span class="pin-chip" style="background:'+p.color+'">📌 '+fmtD(p.date)+' <span class="x" onclick="unpin('+p.id+')">✕</span></span>'
+  ).join('');
+
+  let lg='';
+  if(cur)lg+='<span class="legend-item"><span class="legend-sw" style="background:'+MC+'"></span>'+fmtD(cur.date)+'</span>';
+  pinned.forEach(p=>lg+='<span class="legend-item"><span class="legend-sw" style="background:'+p.color+';opacity:.7"></span>'+fmtD(p.date)+'</span>');
+  const sf=document.getElementById('fedChk').checked;
+  const ff=getFF();
+  if(sf&&ff)lg+='<span class="legend-item"><span class="legend-sw" style="border:1px dashed rgba(34,197,94,.6);background:rgba(34,197,94,.12)"></span>FFR '+ff.lo.toFixed(2)+'–'+ff.hi.toFixed(2)+'%</span>';
+  document.getElementById('legendBar').innerHTML=lg;
+
+  const ds=[];
+  let allR=[];
+  if(cur)allR.push(...cur.rates.filter(r=>r!==null));
+  pinned.forEach(p=>allR.push(...p.rates.filter(r=>r!==null)));
+  if(sf&&ff)allR.push(ff.lo,ff.hi);
+  if(!allR.length)allR=[0,5];
+  const yMn=Math.floor((Math.min(...allR)-.2)*5)/5,yMx=Math.ceil((Math.max(...allR)+.2)*5)/5;
+
+  // Fed Funds band (behind everything)
+  if(sf&&ff){
+    ds.push({label:'FF Hi',data:Array(N).fill(ff.hi),borderColor:'rgba(34,197,94,.35)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,isFed:1,spanGaps:true});
+    ds.push({label:'FF Lo',data:Array(N).fill(ff.lo),borderColor:'rgba(34,197,94,.35)',backgroundColor:'rgba(34,197,94,.07)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:'-1',isFed:1,spanGaps:true});
+  }
+  // Pinned curves
+  pinned.forEach(p=>{
+    ds.push({label:fmtD(p.date),data:p.rates,borderColor:p.color,backgroundColor:'transparent',borderWidth:2,borderDash:[6,3],pointRadius:3.5,pointBackgroundColor:p.color,pointBorderColor:'#fff',pointBorderWidth:1,pointHoverRadius:5,fill:false,tension:.4,spanGaps:true});
+  });
+  // Current curve
+  if(cur){
+    ds.push({label:fmtD(cur.date),data:cur.rates,borderColor:MC,backgroundColor:'rgba(66,165,245,.06)',borderWidth:2.5,pointRadius:4,pointBackgroundColor:MC,pointBorderColor:'#fff',pointBorderWidth:1.5,pointHoverRadius:6,fill:true,tension:.4,spanGaps:true});
+  }
+  chart.data.datasets=ds;
+  chart.options.scales.y.min=yMn;chart.options.scales.y.max=yMx;
+  chart.update('none');
+  renderTbl(cur);
+}
+
+function renderTbl(cur){
+  const w=document.getElementById('tblWrap');
+  if(!cur&&!pinned.length){w.innerHTML='';return;}
+  let h='<table><tr><th>Date</th>'+LABELS.map(l=>'<th>'+l+'</th>').join('')+'</tr>';
+  if(cur)h+='<tr class="cur"><td style="color:'+MC+';font-weight:700">'+fmtD(cur.date)+'</td>'+cur.rates.map(r=>'<td>'+(r!==null?r.toFixed(2)+'%':'—')+'</td>').join('')+'</tr>';
+  pinned.slice().reverse().forEach(p=>{
+    h+='<tr><td style="color:'+p.color+';font-weight:700">📌 '+fmtD(p.date)+'</td>'+p.rates.map(r=>'<td>'+(r!==null?r.toFixed(2)+'%':'—')+'</td>').join('')+'</tr>';
+  });
+  if(cur&&pinned.length>=1){
+    pinned.forEach(p=>{
+      h+='<tr><td style="font-size:9px;color:'+p.color+'">Δ vs '+fmtD(p.date)+'</td>'+LABELS.map((_,i)=>{
+        if(cur.rates[i]==null||p.rates[i]==null)return'<td>—</td>';
+        const d=cur.rates[i]-p.rates[i],s=d>0?'+':'',c=d>0?'#dc2626':d<0?'#16a34a':'#666';
+        return'<td style="color:'+c+';font-size:9px">'+s+d.toFixed(2)+'</td>';
+      }).join('')+'</tr>';
+    });
+  }
+  w.innerHTML=h+'</table>';
+}
+
+/* ── init ── */
+(function(){
+  const ctx=document.getElementById('chart').getContext('2d');
+  chart=new Chart(ctx,{type:'line',data:{labels:LABELS,datasets:[]},options:{
+    responsive:true,maintainAspectRatio:false,animation:{duration:200},
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(0,0,0,.82)',titleFont:{size:12},bodyFont:{size:11},padding:10,
+      callbacks:{label(c){if(c.dataset.isFed)return null;return c.dataset.label+': '+c.parsed.y.toFixed(2)+'%';}}}},
+    scales:{
+      x:{grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666'}},
+      y:{grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666',callback:v=>v.toFixed(1)}}
+    }
+  }});
+  document.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')nav(-1);if(e.key==='ArrowRight')nav(1);});
+  const thisYear=new Date().getFullYear();
+  ensureYear(thisYear).then(()=>{
+    if(allData.length){idx=allData.length-1;render();}
+  });
+})();
+</script>
+</body>
+</html>
