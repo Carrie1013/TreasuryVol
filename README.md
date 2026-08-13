@@ -105,7 +105,7 @@ Displayed tenors are intentionally reduced for readability:
 1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y
 ```
 
-The x-axis uses a Bloomberg-style piecewise display scale: 1M-6M is an expanded front-end sub-axis, 6M-1Y is a transition segment, and 1Y-30Y is linear in tenor years so equal year gaps have equal visual distance.
+The x-axis uses a Bloomberg-style exponential front-loaded time scale, `u(t) = t + (8.41 / pi) * (1 - exp(-pi * t))`, where `t` is tenor in years. The extra front-end spacing fades quickly so the long end approaches a linear year scale.
 
 Although the calculation is built from rolling windows, this panel shows only the latest available point from each selected window. In practice, it reads as a current snapshot by lookback length:
 
