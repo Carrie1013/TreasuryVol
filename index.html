@@ -410,7 +410,11 @@ const TENOR_YEAR_MAP = {
   "20Y": 20,
   "30Y": 30,
 };
-const BLOOMBERG_STYLE_TICKS = ["1M", "4M", "1Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"];
+const FRONT_ONE_MONTH_POSITION = -1.872;
+const FRONT_SIX_MONTH_POSITION = 0.036;
+const FRONT_MONTH_LINEAR = 0.502;
+const FRONT_MONTH_CURVE = -0.024;
+const BLOOMBERG_STYLE_TICKS = ["1M", "4M", "1Y", "3Y", "5Y", "7Y", "10Y", "15Y", "20Y", "30Y"];
 const HIGH_RATE_PERIOD_LABEL = "High Rate Period";
 const LOW_RATE_PERIOD_LABEL = "Low Rate Period";
 const LAST_20_YEARS_LABEL = "Last 20 Years";
@@ -886,20 +890,27 @@ function populateVolWindowSelect(summary) {
 }
 
 function tenorPosition(tenor) {
-  const years = TENOR_YEAR_MAP[tenor];
-  if (years === undefined) return null;
-  return Math.sqrt(years);
+  const match = /^(\d+(?:\.\d+)?)([MY])$/.exec(tenor);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (match[2] === "Y") return value;
+  if (value <= 6) {
+    const offset = value - 1;
+    return FRONT_ONE_MONTH_POSITION + (FRONT_MONTH_LINEAR * offset) + (FRONT_MONTH_CURVE * offset * offset);
+  }
+  return FRONT_SIX_MONTH_POSITION + ((value - 6) / 6) * (1 - FRONT_SIX_MONTH_POSITION);
 }
 
 function tenorAxis(tenors, title = "") {
-  const ticks = BLOOMBERG_STYLE_TICKS.filter((tenor) => tenors.includes(tenor));
+  const ticks = BLOOMBERG_STYLE_TICKS.filter((tenor) => tenorPosition(tenor) !== null);
   return {
     title,
     type: "linear",
     tickmode: "array",
     tickvals: ticks.map(tenorPosition).filter((value) => value !== null),
     ticktext: ticks.filter((tenor) => tenorPosition(tenor) !== null),
-    range: [0, 5.7],
+    range: [-2.1, 31],
+    zeroline: false,
     tickangle: 0,
     automargin: true,
   };

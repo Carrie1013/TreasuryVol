@@ -74,9 +74,21 @@ tr.cur td{background:#eff6ff;font-weight:600}
 // No 1.5M — matches the original site
 const LABELS=['1M','2M','3M','4M','6M','1Y','2Y','3Y','5Y','7Y','10Y','20Y','30Y'];
 const TENOR_YEARS=[1/12,2/12,3/12,4/12,.5,1,2,3,5,7,10,20,30];
-const TICK_LABELS=['1M','4M','1Y','3Y','5Y','7Y','10Y','20Y','30Y'];
-const TENOR_POSITIONS=TENOR_YEARS.map(years=>Math.sqrt(years));
-const TICK_POSITIONS=TICK_LABELS.map(label=>TENOR_POSITIONS[LABELS.indexOf(label)]);
+const FRONT_ONE_MONTH_POSITION=-1.872,FRONT_SIX_MONTH_POSITION=.036,FRONT_MONTH_LINEAR=.502,FRONT_MONTH_CURVE=-.024;
+const TICK_LABELS=['1M','4M','1Y','3Y','5Y','7Y','10Y','15Y','20Y','30Y'];
+function tenorPosition(label){
+  const match=/^(\d+(?:\.\d+)?)([MY])$/.exec(label);
+  if(!match)return null;
+  const value=Number(match[1]);
+  if(match[2]==='Y')return value;
+  if(value<=6){
+    const offset=value-1;
+    return FRONT_ONE_MONTH_POSITION+(FRONT_MONTH_LINEAR*offset)+(FRONT_MONTH_CURVE*offset*offset);
+  }
+  return FRONT_SIX_MONTH_POSITION+((value-6)/6)*(1-FRONT_SIX_MONTH_POSITION);
+}
+const TENOR_POSITIONS=LABELS.map(tenorPosition);
+const TICK_POSITIONS=TICK_LABELS.map(tenorPosition);
 const XML_KEYS=['BC_1MONTH','BC_2MONTH','BC_3MONTH','BC_4MONTH','BC_6MONTH',
   'BC_1YEAR','BC_2YEAR','BC_3YEAR','BC_5YEAR','BC_7YEAR','BC_10YEAR','BC_20YEAR','BC_30YEAR'];
 const N=LABELS.length; // 13
@@ -282,7 +294,7 @@ function renderTbl(cur){
         label(c){if(c.dataset.isFed)return null;return c.dataset.label+': '+c.parsed.y.toFixed(2)+'%';}
       }}},
     scales:{
-      x:{type:'linear',min:0,max:5.7,afterBuildTicks(axis){axis.ticks=TICK_POSITIONS.map(value=>({value}));},grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666',callback:tenorTick,maxRotation:0,autoSkip:false}},
+      x:{type:'linear',min:-2.1,max:31,afterBuildTicks(axis){axis.ticks=TICK_POSITIONS.map(value=>({value}));},grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666',callback:tenorTick,maxRotation:0,autoSkip:false}},
       y:{grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666',callback:v=>v.toFixed(1)}}
     }
   }});
