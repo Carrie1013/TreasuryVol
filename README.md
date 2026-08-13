@@ -105,7 +105,7 @@ Displayed tenors are intentionally reduced for readability:
 1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y
 ```
 
-The x-axis uses a custom display scale rather than time-proportional spacing, keeping short tenors readable while giving longer maturities a little more visual room.
+The x-axis uses a square-root time scale based on tenor years. This keeps the front end readable while compressing the long end enough that the chart does not become dominated by 20Y and 30Y spacing.
 
 Although the calculation is built from rolling windows, this panel shows only the latest available point from each selected window. In practice, it reads as a current snapshot by lookback length:
 
