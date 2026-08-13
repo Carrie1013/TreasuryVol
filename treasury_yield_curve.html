@@ -73,6 +73,9 @@ tr.cur td{background:#eff6ff;font-weight:600}
 <script>
 // No 1.5M — matches the original site
 const LABELS=['1M','2M','3M','4M','6M','1Y','2Y','3Y','5Y','7Y','10Y','20Y','30Y'];
+const TENOR_POSITIONS=[0,.22,.36,.52,.72,1.05,1.42,1.82,2.55,3.2,4.05,6.75,9.45];
+const TICK_LABELS=['1M','4M','1Y','3Y','5Y','7Y','10Y','20Y','30Y'];
+const TICK_POSITIONS=TICK_LABELS.map(label=>TENOR_POSITIONS[LABELS.indexOf(label)]);
 const XML_KEYS=['BC_1MONTH','BC_2MONTH','BC_3MONTH','BC_4MONTH','BC_6MONTH',
   'BC_1YEAR','BC_2YEAR','BC_3YEAR','BC_5YEAR','BC_7YEAR','BC_10YEAR','BC_20YEAR','BC_30YEAR'];
 const N=LABELS.length; // 13
@@ -96,6 +99,16 @@ function getFF(){
   const hi=parseFloat(document.getElementById('ffHi').value);
   if(isNaN(lo)||isNaN(hi))return null;
   return{lo:Math.min(lo,hi),hi:Math.max(lo,hi)};
+}
+function curvePoints(values){
+  return values.map((value,i)=>({x:TENOR_POSITIONS[i],y:value,tenor:LABELS[i]}));
+}
+function bandPoints(value){
+  return [{x:TENOR_POSITIONS[0],y:value,tenor:LABELS[0]},{x:TENOR_POSITIONS[N-1],y:value,tenor:LABELS[N-1]}];
+}
+function tenorTick(value){
+  const index=TICK_POSITIONS.findIndex(position=>Math.abs(position-value)<1e-6);
+  return index>=0?TICK_LABELS[index]:'';
 }
 
 /* ── XML parsing ── */
@@ -218,16 +231,16 @@ function render(){
 
   // Fed Funds band (behind everything)
   if(sf&&ff){
-    ds.push({label:'FF Hi',data:Array(N).fill(ff.hi),borderColor:'rgba(34,197,94,.35)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,isFed:1,spanGaps:true});
-    ds.push({label:'FF Lo',data:Array(N).fill(ff.lo),borderColor:'rgba(34,197,94,.35)',backgroundColor:'rgba(34,197,94,.07)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:'-1',isFed:1,spanGaps:true});
+    ds.push({label:'FF Hi',data:bandPoints(ff.hi),borderColor:'rgba(34,197,94,.35)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,isFed:1,spanGaps:true});
+    ds.push({label:'FF Lo',data:bandPoints(ff.lo),borderColor:'rgba(34,197,94,.35)',backgroundColor:'rgba(34,197,94,.07)',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:'-1',isFed:1,spanGaps:true});
   }
   // Pinned curves
   pinned.forEach(p=>{
-    ds.push({label:fmtD(p.date),data:p.rates,borderColor:p.color,backgroundColor:'transparent',borderWidth:2,borderDash:[6,3],pointRadius:3.5,pointBackgroundColor:p.color,pointBorderColor:'#fff',pointBorderWidth:1,pointHoverRadius:5,fill:false,tension:.4,spanGaps:true});
+    ds.push({label:fmtD(p.date),data:curvePoints(p.rates),borderColor:p.color,backgroundColor:'transparent',borderWidth:2,borderDash:[6,3],pointRadius:3.5,pointBackgroundColor:p.color,pointBorderColor:'#fff',pointBorderWidth:1,pointHoverRadius:5,fill:false,tension:.4,spanGaps:true});
   });
   // Current curve
   if(cur){
-    ds.push({label:fmtD(cur.date),data:cur.rates,borderColor:MC,backgroundColor:'rgba(66,165,245,.06)',borderWidth:2.5,pointRadius:4,pointBackgroundColor:MC,pointBorderColor:'#fff',pointBorderWidth:1.5,pointHoverRadius:6,fill:true,tension:.4,spanGaps:true});
+    ds.push({label:fmtD(cur.date),data:curvePoints(cur.rates),borderColor:MC,backgroundColor:'rgba(66,165,245,.06)',borderWidth:2.5,pointRadius:4,pointBackgroundColor:MC,pointBorderColor:'#fff',pointBorderWidth:1.5,pointHoverRadius:6,fill:true,tension:.4,spanGaps:true});
   }
   chart.data.datasets=ds;
   chart.options.scales.y.min=yMn;chart.options.scales.y.max=yMx;
@@ -260,11 +273,15 @@ function renderTbl(cur){
   const ctx=document.getElementById('chart').getContext('2d');
   chart=new Chart(ctx,{type:'line',data:{labels:LABELS,datasets:[]},options:{
     responsive:true,maintainAspectRatio:false,animation:{duration:200},
-    interaction:{mode:'index',intersect:false},
+    parsing:false,
+    interaction:{mode:'nearest',axis:'x',intersect:false},
     plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(0,0,0,.82)',titleFont:{size:12},bodyFont:{size:11},padding:10,
-      callbacks:{label(c){if(c.dataset.isFed)return null;return c.dataset.label+': '+c.parsed.y.toFixed(2)+'%';}}}},
+      callbacks:{
+        title(items){return items[0]?.raw?.tenor||'';},
+        label(c){if(c.dataset.isFed)return null;return c.dataset.label+': '+c.parsed.y.toFixed(2)+'%';}
+      }}},
     scales:{
-      x:{grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666'}},
+      x:{type:'linear',min:-.2,max:9.7,afterBuildTicks(axis){axis.ticks=TICK_POSITIONS.map(value=>({value}));},grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666',callback:tenorTick,maxRotation:0,autoSkip:false}},
       y:{grid:{color:'#f0f0f0'},ticks:{font:{size:11},color:'#666',callback:v=>v.toFixed(1)}}
     }
   }});

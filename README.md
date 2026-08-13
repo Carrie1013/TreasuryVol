@@ -105,7 +105,7 @@ Displayed tenors are intentionally reduced for readability:
 1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 10Y, 20Y, 30Y
 ```
 
-The x-axis uses evenly spaced tenor labels, so each displayed maturity has the same visual weight and the curve is easier to scan across short, intermediate, and long maturities.
+The x-axis uses a custom display scale rather than time-proportional spacing, keeping short tenors readable while giving longer maturities a little more visual room.
 
 Although the calculation is built from rolling windows, this panel shows only the latest available point from each selected window. In practice, it reads as a current snapshot by lookback length:
 
